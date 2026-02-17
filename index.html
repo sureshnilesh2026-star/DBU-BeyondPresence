@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Avatar Assistant</title>
+
+    <!-- LiveKit Client SDK (Browser UMD build) -->
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+
+    <style>
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+
+        /* ── Main container ─────────────────────────── */
+        #app {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* ── Avatar container ───────────────────────── */
+        #avatar-container {
+            position: relative;
+            width: 100%;
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: hidden;
+            background: #1e293b;
+            animation: fadeIn 0.8s ease;
+        }
+
+        #avatar-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        #avatar-placeholder {
+            position: absolute;
+            inset: 0;
+            z-index: 5;
+            transition: opacity 1.2s ease;
+        }
+
+        #avatar-placeholder img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        #avatar-placeholder.dissolve {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* ── Status indicator ───────────────────────── */
+        #status {
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #94a3b8;
+            z-index: 10;
+            background: rgba(15,23,42,0.7);
+            padding: 6px 16px;
+            border-radius: 20px;
+            backdrop-filter: blur(8px);
+        }
+
+        #status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #475569;
+            transition: background 0.3s ease;
+        }
+
+        #status-dot.connecting {
+            background: #facc15;
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+
+        #status-dot.connected {
+            background: #22c55e;
+        }
+
+        #status-dot.error {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.3); }
+        }
+
+        /* ── Fade-in animation ──────────────────────── */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ── Camera capture window ─────────────────── */
+        #camera-window {
+            position: absolute;
+            bottom: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 260px;
+            height: 195px;
+            border-radius: 14px;
+            overflow: hidden;
+            border: 2px solid rgba(99, 102, 241, 0.5);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            z-index: 20;
+            background: #0f172a;
+            animation: fadeIn 0.6s ease;
+            transition: border-color 0.4s ease;
+        }
+
+        #camera-window video,
+        #camera-window canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        #camera-window canvas {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #camera-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            z-index: 1;
+            transition: background 0.4s ease;
+        }
+
+        #countdown {
+            font-size: 2.8rem;
+            font-weight: 700;
+            color: #fff;
+            text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+            line-height: 1;
+        }
+
+        #camera-status {
+            font-size: 0.75rem;
+            color: #e2e8f0;
+            margin-top: 6px;
+            text-align: center;
+            padding: 0 12px;
+            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        #camera-label {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 6px 10px;
+            background: rgba(0, 0, 0, 0.5);
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #94a3b8;
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            z-index: 2;
+            backdrop-filter: blur(4px);
+        }
+
+        /* ── Responsive ─────────────────────────────── */
+    </style>
+</head>
+<body>
+
+<div id="app">
+
+    <!-- Avatar Video Container -->
+    <div id="avatar-container">
+        <div id="avatar-placeholder">
+            <img src="assets/start-screen.png" alt="AI Avatar">
+        </div>
+    </div>
+
+    <!-- Camera Capture Window -->
+    <div id="camera-window">
+        <video id="camera-video" autoplay playsinline muted></video>
+        <canvas id="camera-canvas"></canvas>
+        <div id="camera-overlay">
+            <div id="countdown"></div>
+            <div id="camera-status"></div>
+        </div>
+    </div>
+
+    <!-- Status Indicator -->
+    <div id="status">
+        <div id="status-dot"></div>
+        <span id="status-text">Ready</span>
+    </div>
+
+
+</div>
+
+<script>
+    // ═══════════════════════════════════════════════════════════════
+    //  CONFIGURATION — Replace these with your own credentials
+    // ═══════════════════════════════════════════════════════════════
+    const AGENT_ID  = "cfc2b606-2db1-4b09-9478-6989cd491279";
+    const API_KEY   = "sk-zwRdGyVaBjKzzUkNYYPFFaLSpa9SFNMDgdQ-KexURow";
+    const API_BASE     = "https://api.bey.dev";
+    const WEBHOOK_URL  = "https://eva-ramanik.app.n8n.cloud/webhook/face-match";
+
+    // ═══════════════════════════════════════════════════════════════
+    //  LiveKit SDK references (loaded via CDN UMD build)
+    // ═══════════════════════════════════════════════════════════════
+    const {
+        Room,
+        RoomEvent,
+        ConnectionState,
+        Track,
+        DisconnectReason,
+    } = LivekitClient;
+
+    // ═══════════════════════════════════════════════════════════════
+    //  DOM references
+    // ═══════════════════════════════════════════════════════════════
+    const avatarContainer  = document.getElementById("avatar-container");
+    const avatarPlaceholder = document.getElementById("avatar-placeholder");
+    const statusDot        = document.getElementById("status-dot");
+    const statusText       = document.getElementById("status-text");
+
+    // ═══════════════════════════════════════════════════════════════
+    //  State
+    // ═══════════════════════════════════════════════════════════════
+    let room             = null;
+    let callId           = null;
+    // ═══════════════════════════════════════════════════════════════
+    //  UI helpers
+    // ═══════════════════════════════════════════════════════════════
+    function setStatus(state, text) {
+        statusDot.className = state;  // "", "connecting", "connected", "error"
+        statusText.textContent = text;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  Beyond Presence API — Agent Update & Call Management
+    // ═══════════════════════════════════════════════════════════════
+
+    // Update the existing agent's greeting with the actual user name
+    async function updateAgentGreeting(userName) {
+        console.log("[BP] Updating agent greeting for:", userName);
+
+        const res = await fetch(`${API_BASE}/v1/agents/${AGENT_ID}`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                "x-api-key": API_KEY,
+            },
+            body: JSON.stringify({
+                greeting: `Hi ${userName}! I'm Eva! Your all New AI Assistant. How may I help you today?`,
+            }),
+        });
+
+        if (!res.ok) {
+            const errorBody = await res.text();
+            console.warn("[BP] Failed to update greeting (HTTP " + res.status + "):", errorBody);
+        } else {
+            console.log("[BP] Agent greeting updated successfully");
+        }
+    }
+
+    // Create a call with the existing agent
+    async function createCall(userName) {
+        console.log("[BP] Creating call with existing agent:", AGENT_ID);
+
+        const bodyPayload = { agent_id: AGENT_ID };
+        if (userName) {
+            bodyPayload.livekit_username = userName;
+            bodyPayload.tags = { user_name: userName };
+        }
+
+        console.log("[BP] Call payload:", JSON.stringify(bodyPayload));
+
+        const res = await fetch(`${API_BASE}/v1/calls`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "x-api-key": API_KEY,
+            },
+            body: JSON.stringify(bodyPayload),
+        });
+
+        if (!res.ok) {
+            const errorBody = await res.text();
+            console.error("[BP] Create call failed:", res.status, errorBody);
+            throw new Error(`Failed to create call (HTTP ${res.status}): ${errorBody}`);
+        }
+
+        const data = await res.json();
+        console.log("[BP] Call created:", data.id);
+        console.log("[BP] LiveKit URL:", data.livekit_url);
+
+        return data;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  LiveKit — Connect to Room
+    // ═══════════════════════════════════════════════════════════════
+    async function connectToRoom(livekitUrl, livekitToken) {
+        console.log("[LK] Initializing Room...");
+
+        room = new Room({
+            adaptiveStream: true,
+            dynacast: true,
+            audioCaptureDefaults: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
+        });
+
+        // ── Connection state changes ──
+        room.on(RoomEvent.ConnectionStateChanged, (state) => {
+            console.log("[LK] Connection state →", state);
+            switch (state) {
+                case ConnectionState.Connecting:
+                    setStatus("connecting", "Connecting...");
+                    break;
+                case ConnectionState.Connected:
+                    setStatus("connected", "Connected");
+                    break;
+                case ConnectionState.Reconnecting:
+                    setStatus("connecting", "Reconnecting...");
+                    break;
+                case ConnectionState.Disconnected:
+                    setStatus("", "Disconnected");
+                    break;
+            }
+        });
+
+        // ── Remote track subscribed (avatar video + audio) ──
+        room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+            console.log("[LK] Track subscribed:", track.kind, "from", participant.identity);
+
+            if (track.kind === Track.Kind.Video) {
+                const videoEl = track.attach();
+                videoEl.style.width = "100%";
+                videoEl.style.height = "100%";
+                videoEl.style.objectFit = "cover";
+                avatarContainer.appendChild(videoEl);
+
+                // Soft dissolve: fade out static image to reveal live video
+                avatarPlaceholder.classList.add("dissolve");
+                setTimeout(() => { avatarPlaceholder.style.display = "none"; }, 1300);
+                console.log("[LK] Avatar video attached — dissolving static screen");
+            }
+
+            if (track.kind === Track.Kind.Audio) {
+                const audioEl = track.attach();
+                audioEl.style.display = "none";
+                document.body.appendChild(audioEl);
+                console.log("[LK] Avatar audio attached");
+            }
+        });
+
+        // ── Remote track unsubscribed ──
+        room.on(RoomEvent.TrackUnsubscribed, (track) => {
+            console.log("[LK] Track unsubscribed:", track.kind);
+            track.detach().forEach((el) => el.remove());
+        });
+
+        // ── Transcription events (console only) ──
+        room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
+            if (!segments || segments.length === 0) return;
+            const isAgent = participant && participant.identity !== room.localParticipant.identity;
+            const role = isAgent ? "agent" : "user";
+            for (const seg of segments) {
+                console.log(`[TR] ${role} [${seg.final ? "final" : "partial"}]: ${seg.text}`);
+            }
+        });
+
+        // ── Data received (console only) ──
+        room.on(RoomEvent.DataReceived, (payload, participant, kind, topic) => {
+            try {
+                const text = new TextDecoder().decode(payload);
+                console.log("[LK] Data received:", topic, text);
+            } catch (e) { /* ignore */ }
+        });
+
+        // ── Active speakers ──
+        room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+            if (speakers.length > 0) {
+                const names = speakers.map((s) => s.identity).join(", ");
+                console.log("[LK] Active speakers:", names);
+            }
+        });
+
+        // ── Participant events ──
+        room.on(RoomEvent.ParticipantConnected, (participant) => {
+            console.log("[LK] Participant joined:", participant.identity);
+        });
+
+        room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+            console.log("[LK] Participant left:", participant.identity);
+
+            // If the agent left, the call has ended — stop everything
+            const remainingRemote = room && room.remoteParticipants.size;
+            console.log("[LK] Remote participants remaining:", remainingRemote);
+            if (!remainingRemote || remainingRemote === 0) {
+                console.log("[APP] Agent disconnected — ending conversation automatically");
+                setStatus("", "Call ended");
+                stopConversation();
+            }
+        });
+
+        // ── Disconnected ──
+        room.on(RoomEvent.Disconnected, (reason) => {
+            console.log("[LK] Disconnected. Reason:", reason);
+            setStatus("", "Call ended");
+            handleDisconnect();
+        });
+
+        // ── Media device errors ──
+        room.on(RoomEvent.MediaDevicesError, (error) => {
+            console.error("[LK] Media device error:", error);
+            setStatus("error", "Microphone error — check permissions");
+        });
+
+        // ── Connect ──
+        console.log("[LK] Connecting to room...");
+        await room.connect(livekitUrl, livekitToken);
+        console.log("[LK] Connected! Local participant:", room.localParticipant.identity);
+
+        // Enable microphone
+        console.log("[LK] Enabling microphone...");
+        await room.localParticipant.setMicrophoneEnabled(true);
+        console.log("[LK] Microphone enabled");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  Disconnect & cleanup
+    // ═══════════════════════════════════════════════════════════════
+    function handleDisconnect() {
+        // Remove all attached media elements from avatar container
+        avatarContainer.querySelectorAll("video, audio").forEach((el) => el.remove());
+        document.querySelectorAll("audio[data-lk]").forEach((el) => el.remove());
+
+        // Restore static screen
+        avatarPlaceholder.style.display = "";
+        avatarPlaceholder.classList.remove("dissolve");
+
+        setStatus("", "Disconnected");
+        room = null;
+        callId = null;
+    }
+
+    async function stopConversation() {
+        console.log("[APP] Stopping conversation...");
+
+        if (room) {
+            try {
+                await room.localParticipant.setMicrophoneEnabled(false);
+            } catch (e) {
+                // Ignore — might already be disconnected
+            }
+            await room.disconnect();
+        }
+
+        handleDisconnect();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  Start conversation — main entry point
+    // ═══════════════════════════════════════════════════════════════
+    async function startConversation(userName) {
+        setStatus("connecting", "Connecting to avatar...");
+
+        try {
+            // Step 1: Update the agent's greeting with the matched name
+            await updateAgentGreeting(userName);
+
+            // Step 2: Create call with the existing agent
+            const callData = await createCall(userName);
+            callId = callData.id;
+
+            // Step 2: Connect to LiveKit room
+            await connectToRoom(callData.livekit_url, callData.livekit_token);
+
+            setStatus("connected", "Connected — start speaking");
+            console.log("[APP] Conversation started successfully");
+
+        } catch (err) {
+            console.error("[APP] Failed to start conversation:", err);
+            setStatus("error", `Error: ${err.message}`);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  Camera Capture & Face Verification
+    // ═══════════════════════════════════════════════════════════════
+    const cameraVideo    = document.getElementById("camera-video");
+    const cameraCanvas   = document.getElementById("camera-canvas");
+    const cameraOverlay  = document.getElementById("camera-overlay");
+    const countdownEl    = document.getElementById("countdown");
+    const cameraStatusEl = document.getElementById("camera-status");
+    const cameraWindow   = document.getElementById("camera-window");
+
+    async function startCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: 640, height: 480, facingMode: "user" },
+            });
+            cameraVideo.srcObject = stream;
+            await cameraVideo.play();
+            startCountdown();
+        } catch (err) {
+            console.error("[CAM] Camera access failed:", err);
+            setStatus("error", "Camera access denied");
+            cameraStatusEl.textContent = "";
+        }
+    }
+
+    function startCountdown() {
+        countdownEl.textContent = "";
+        cameraStatusEl.textContent = "";
+        cameraOverlay.style.background = "rgba(0, 0, 0, 0.35)";
+
+        setTimeout(capturePhoto, 1000);
+    }
+
+    function capturePhoto() {
+        const ctx = cameraCanvas.getContext("2d");
+        cameraCanvas.width  = cameraVideo.videoWidth;
+        cameraCanvas.height = cameraVideo.videoHeight;
+        ctx.drawImage(cameraVideo, 0, 0);
+
+        // Freeze: show captured frame, hide live feed
+        cameraCanvas.style.display = "block";
+        cameraVideo.style.display  = "none";
+
+        // Release camera hardware
+        const stream = cameraVideo.srcObject;
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+        cameraVideo.srcObject = null;
+
+        cameraOverlay.style.background = "rgba(0, 0, 0, 0.1)";
+        console.log("[CAM] Photo captured — sending to webhook...");
+        setTimeout(sendToWebhook, 600);
+    }
+
+    async function sendToWebhook() {
+        cameraStatusEl.textContent = "";
+        setStatus("connecting", "Verifying identity...");
+
+        try {
+            // Convert canvas to a JPEG Blob, then send as multipart file upload
+            const blob = await new Promise((resolve) =>
+                cameraCanvas.toBlob(resolve, "image/jpeg", 0.85)
+            );
+
+            const formData = new FormData();
+            formData.append("file", blob, "capture.jpg");
+
+            const res = await fetch(WEBHOOK_URL, {
+                method: "POST",
+                body: formData,
+            });
+
+            if (!res.ok) {
+                const errBody = await res.text();
+                throw new Error(`Webhook error (HTTP ${res.status}): ${errBody}`);
+            }
+
+            const rawData = await res.json();
+            console.log("[WH] Face match raw response:", JSON.stringify(rawData));
+
+            // n8n wraps results inside conversation_initiation_data.variables — unwrap
+            const data = (rawData.conversation_initiation_data && rawData.conversation_initiation_data.variables)
+                       || rawData.data
+                       || rawData;
+            console.log("[WH] Face match parsed data:", JSON.stringify(data));
+
+            // Check match status from n8n
+            if (data.status && data.status !== "MATCHED") {
+                throw new Error("Face not recognized");
+            }
+
+            const userName = data.name || data.user_name || data.userName || data.matched_name || "Guest";
+            console.log("[WH] Matched user:", userName, "| Confidence:", data.confidence);
+
+            // Success UI
+            cameraStatusEl.textContent = "";
+            cameraOverlay.style.background = "rgba(34, 197, 94, 0.25)";
+            cameraWindow.style.borderColor = "rgba(34, 197, 94, 0.6)";
+
+            // Fade out camera window after a short pause
+            setTimeout(() => {
+                cameraWindow.style.transition = "opacity 0.6s ease, transform 0.6s ease";
+                cameraWindow.style.opacity = "0";
+                cameraWindow.style.transform = "translateX(-50%) scale(0.9) translateY(10px)";
+                setTimeout(() => { cameraWindow.style.display = "none"; }, 600);
+            }, 2500);
+
+            // Start avatar video and conversation with the matched name
+            startConversation(userName);
+
+        } catch (err) {
+            console.error("[WH] Face verification failed:", err);
+            cameraStatusEl.textContent = "";
+            cameraOverlay.style.background = "rgba(239, 68, 68, 0.25)";
+            cameraWindow.style.borderColor = "rgba(239, 68, 68, 0.6)";
+            setStatus("error", "Face verification failed");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  Event listeners
+    // ═══════════════════════════════════════════════════════════════
+    // Graceful cleanup on page unload
+    window.addEventListener("beforeunload", () => {
+        if (room) {
+            room.disconnect();
+        }
+    });
+
+    // On page load: fetch agent config + start face verification in parallel
+    window.addEventListener("load", () => {
+        console.log("[APP] Page loaded — starting face verification...");
+        startCamera();
+    });
+</script>
+
+</body>
+</html>
